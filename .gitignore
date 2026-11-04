@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Local database (contains personal data)
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# DB backups / dumps
+*.bak
+*.sqlite
+*.sqlite3
+data/backup*/
+
+# Virtual envs / tooling caches
+venv/
+.venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
+
+# Env / secrets
+.env
+*.env
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Office temp files
+~$*.docx
+
+# Local docs not for the repo
+fitness_nov.docx

@@ -311,7 +311,7 @@ function boardView() {
   const medal = (r) => ((r.streak > 0 || r.minutes > 0) && r.rank <= 3 ? ["🥇", "🥈", "🥉"][r.rank - 1] : `<span class="rank-num">${r.rank}</span>`);
   const rows = b.rows.map((r) => `<tr class="${r.me ? "me" : ""}">
       <td class="rank">${medal(r)}</td>
-      <td>${esc(r.name)}${r.me ? ' <span class="tag ok">You</span>' : ""}</td>
+      <td><button class="link-btn" data-action="view-week" data-id="${r.id}" title="See this week's activities">${esc(r.name)}</button>${r.me ? ' <span class="tag ok">You</span>' : ""}</td>
       <td>${week ? pips(r.week) + ` <strong>${r.days}/5</strong>` : `<strong>${r.days}</strong> days`}</td>
       <td>${fmtMins(r.minutes)}</td><td>🔥 ${r.streak}</td><td>🏆 ${r.perfect_weeks}</td></tr>`).join("");
   return shell(`<main class="page single"><section class="card" aria-label="Leaderboard">
@@ -324,8 +324,20 @@ function boardView() {
     <tbody>${rows || '<tr><td colspan="6" class="muted">No members yet.</td></tr>'}</tbody></table></div></section></main>`, {
     eyebrow: "Leaderboard",
     title: week ? "This week's standings" : "This month's standings",
-    sub: "Team totals only — individual entries stay private.",
+    sub: "Click a member's name to see the activities they logged this week.",
   });
+}
+
+function weekActivityModal(m) {
+  const byDate = new Map();
+  for (const e of m.logs) byDate.set(e.date, [...(byDate.get(e.date) || []), e]);
+  const days = [...byDate].map(([date, es]) => `<h3>${esc(fmtDate(date))} · ${fmtMins(es.reduce((n, e) => n + e.minutes, 0))}</h3>
+    <ul class="entries">${es.map((e) => `<li><div class="grow"><strong>${esc(e.activity)}</strong></div><span>${e.minutes} min</span></li>`).join("")}</ul>`).join("");
+  showModal(`<h2>${esc(m.name)}${m.me ? ' <span class="tag ok">You</span>' : ""}</h2>
+    <p class="muted">Week of ${esc(fmtDate(m.week_start, { day: "numeric", month: "short" }))}</p>
+    <div>${pips(m.week.map((x) => x.status))} <strong>${m.days_done}/5</strong> this week · ${fmtMins(m.logs.reduce((n, e) => n + e.minutes, 0))} logged</div>
+    ${days || '<p class="hint">No activity logged yet this week.</p>'}
+    <div class="row mt16"><button class="btn" data-action="close-modal">Close</button></div>`, { formClass: "wide" });
 }
 
 // ---------------------------------------------------------------- terms & conditions
@@ -665,6 +677,8 @@ document.addEventListener("click", async (e) => {
       const { password } = await api("POST", `/api/admin/members/${d.id}/reset`);
       showModal(`<h2>New password</h2><p>For ${esc(d.name)} — shown only once:</p>
         <p class="mono pw-big">${esc(password)}</p><button class="btn" data-action="close-modal">Close</button>`);
+    } else if (a === "view-week") {
+      weekActivityModal(await api("GET", `/api/leaderboard/${d.id}/week`));
     } else if (a === "view-member") {
       memberLogModal(await api("GET", `/api/admin/members/${d.id}/logs`));
     } else if (a === "toggle-active") {

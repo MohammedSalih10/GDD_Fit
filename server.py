@@ -561,7 +561,7 @@ def participants(conn):
 
 
 def leaderboard_handler(conn, req, user):
-    """Aggregates only - individual log entries are never exposed to other members."""
+    """Aggregates only; a member's current-week activities come from leaderboard_week_handler."""
     period = "month" if req.qv("period") == "month" else "week"
     t = today()
     start = t.replace(day=1) if period == "month" else monday_of(t)
@@ -569,7 +569,7 @@ def leaderboard_handler(conn, req, user):
     for u in participants(conn):
         s = user_summary(conn, u)
         rows.append({
-            "name": u["name"], "me": u["id"] == user["id"],
+            "id": u["id"], "name": u["name"], "me": u["id"] == user["id"],
             "days": sum(1 for d in s["qualified"] if start <= d <= t),
             "minutes": sum(m for d, m in s["day_min"].items() if start <= d <= t),
             "streak": s["stats"]["current_streak"], "perfect_weeks": s["stats"]["perfect_weeks"],
@@ -584,9 +584,26 @@ def leaderboard_handler(conn, req, user):
     return {"period": period, "since": start.isoformat(), "rows": rows}
 
 
+def leaderboard_week_handler(conn, req, user, uid):
+    """Any signed-in member can see a ranked member's activities for the current Mon-Sun week.
+    Activity, minutes and date only - notes and timestamps stay private."""
+    u = conn.execute("SELECT * FROM users WHERE id=? AND active=1 AND participates=1", (int(uid),)).fetchone()
+    if not u:
+        raise ApiError(404, "Member not found.")
+    t = today()
+    monday = monday_of(t)
+    s = user_summary(conn, u)
+    logs = conn.execute(
+        "SELECT log_date, activity, minutes FROM logs WHERE user_id=? AND log_date>=? AND log_date<=? "
+        "ORDER BY log_date, id", (u["id"], monday.isoformat(), (monday + timedelta(days=6)).isoformat()))
+    return {"name": u["name"], "me": u["id"] == user["id"], "week_start": monday.isoformat(),
+            "days_done": s["stats"]["week_done"], "week": s["week"],
+            "logs": [{"date": r["log_date"], "activity": r["activity"], "minutes": r["minutes"]} for r in logs]}
+
+
 def admin_exemptions_handler(conn, req, user):
     require_admin(user)
-    since = (today() - timedelta(days=45)).isoformat()
+    since =(today() - timedelta(days=45)).isoformat()
     rows = conn.execute(
         "SELECT e.user_id, e.ex_date, e.reason, u.name, u.email FROM exemptions e JOIN users u ON u.id=e.user_id "
         "WHERE e.ex_date>=? ORDER BY e.ex_date DESC, u.name COLLATE NOCASE", (since,))
@@ -691,6 +708,7 @@ def admin_report_handler(conn, req, user):
 # method, path regex, handler, needs_auth
 ROUTES = [
     ("GET", r"/api/leaderboard", leaderboard_handler, True),
+    ("GET", r"/api/leaderboard/(\d+)/week", leaderboard_week_handler, True),
     ("GET", r"/api/admin/exemptions", admin_exemptions_handler, True),
     ("POST", r"/api/admin/exemptions", admin_exemption_add_handler, True),
     ("DELETE", r"/api/admin/exemptions/(\d+)/(\d{4}-\d{2}-\d{2})", admin_exemption_delete_handler, True),

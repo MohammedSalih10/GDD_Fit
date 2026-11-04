@@ -17,7 +17,7 @@ Env vars: `GDD_PORT` (8000), `GDD_HOST` (0.0.0.0), `GDD_TZ_OFFSET_HOURS` (5.5), 
 - Weekly goal: 5 days out of Mon-Sun (`WEEK_GOAL`). Celebration pop-ups: first-ever log; every perfect week (5+ days met). Once each.
 - Streak = consecutive days met; an unlogged Sat/Sun or an excused day neither counts nor breaks it; a missed weekday resets it.
 - Fine report: fewer than 3 days done in a Mon-Sun week = Rs 50 (`MIN_DAYS`, `FINE_PER_WEEK`; Fine report tab, CSV export). Each excused day lowers the 3 required days by one (3+ excused days = no fine for that week). Fines are generated only after Sunday has left the 4-day logging window (from the Friday after the week ends), so Sunday's activity can still be logged first. The week containing the programme start (partial) is never fined. The Rs 100 false-entry fine is manual.
-- Leaderboard shows aggregates only (week/month), never individual entries.
+- Leaderboard shows aggregates (week/month). Clicking a ranked member's name opens a pop-up with their current-week activities (activity, minutes, date); notes, timestamps and older weeks are not exposed to other members.
 
 ## Moving to a server
 Copy the folder, keep `data/gdd_fit.db` (all data lives there), run `python server.py`. Put it behind HTTPS and set `GDD_SECURE_COOKIE=1`. Back up the `data/` folder.

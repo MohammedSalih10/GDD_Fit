@@ -575,7 +575,8 @@ def leaderboard_handler(conn, req, user):
             "streak": s["stats"]["current_streak"], "perfect_weeks": s["stats"]["perfect_weeks"],
             "week": [x["status"] for x in s["week"]],
         })
-    rows.sort(key=lambda r: (-r["streak"], -r["minutes"], r["name"].lower()))
+    rows.sort(key=lambda r: r["name"].lower(), reverse=True)  # ties: reverse alphabetical (stable sort below keeps this)
+    rows.sort(key=lambda r: (-r["streak"], -r["minutes"]))
     rank, prev = 0, None
     for r in rows:
         if (r["streak"], r["minutes"]) != prev:

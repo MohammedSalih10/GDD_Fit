@@ -36,7 +36,7 @@ env/
 Thumbs.db
 
 # Logos
-static/logo-*
+*.svg
 
 # Office temp files
 ~$*.docx

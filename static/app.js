@@ -141,7 +141,7 @@ function shell(inner, head) {
   const nav = `<nav class="nav" aria-label="Main">${tabs.map(([v, label]) =>
     `<button data-action="nav" data-view="${v}" ${state.view === v ? 'aria-current="page"' : ""}>${label}</button>`).join("")}</nav>`;
   return `<header class="topbar"><div class="topbar-in">
-      <div class="brand"><img class="brand-mark" src="/logo-mark.svg" alt="Aarvee"><span class="brand-sep" aria-hidden="true"></span><span class="brand-title">November Fitness Challenge</span></div>
+      <div class="brand"><img class="brand-mark" src="/RV.svg" alt="Aarvee"><span class="brand-sep" aria-hidden="true"></span><span class="brand-title">November Fitness Challenge</span></div>
       ${nav}
       ${themeBtn()}
     </div></header>
@@ -150,7 +150,7 @@ function shell(inner, head) {
     </div></div>
     ${inner}
     <footer class="footer"><div class="footer-in">
-      <div class="footer-brand"><img src="/logo-full.svg" alt="Aarvee"></div>
+      <div class="footer-brand"><img src="/RV.svg" alt="Aarvee"></div>
       <span>30 minutes a day, at least 5 days a week · © ${new Date().getFullYear()} Aarvee Engineering Consultants Limited</span>
     </div></footer>`;
 }
@@ -160,8 +160,8 @@ function shell(inner, head) {
 function loginView() {
   return `<div class="login-wrap">
     <section class="login-hero lines" aria-label="About November Fitness Challenge">
-      <img class="brand-mark" src="/logo-full.svg" alt="Aarvee">
       <div class="login-hero-copy">
+        <img class="login-logo" src="/aarvee.svg" alt="Aarvee">
         <p class="eyebrow">November Fitness Challenge</p>
         <h1>30 Minutes a Day for a Healthier Aarvee</h1>
         <p class="lead">Log your daily activity, build your streak and chase a perfect week with your team.</p>
@@ -570,6 +570,7 @@ document.addEventListener("submit", async (e) => {
       state.view = "home";
       await api("POST", "/api/login", fd);
       await refresh();
+      ensureGuard();
     } else if (kind === "log") {
       const wasMet = state.me.today.met;
       const res = await api("POST", "/api/logs", fd);
@@ -654,9 +655,19 @@ document.addEventListener("click", async (e) => {
       el.setAttribute("aria-label", show ? "Hide password" : "Show password");
       input.focus();
     }
-    else if (a === "nav") { state.view = d.view; await refresh(); }
+    else if (a === "nav") {
+      if (d.view === state.view) return;
+      ensureGuard();
+      // Going back to My profile = stepping back in history, so the stack stays [root, home, tab].
+      if (d.view === "home" && inApp() && history.state.view !== "home") { history.back(); return; }
+      const entry = { g: "app", view: d.view };
+      if (state.view === "home") history.pushState(entry, ""); else history.replaceState(entry, "");
+      state.view = d.view;
+      await refresh();
+    }
     else if (a === "period") { state.boardPeriod = d.p; await refresh(); }
-    else if (a === "logout") { await api("POST", "/api/logout"); state.me = null; state.issued = null; render(); }
+    else if (a === "logout") await signOut();
+    else if (a === "signout") { closeModal(); await signOut(); }
     else if (a === "chip") {
       const input = document.getElementById("minutes");
       input.value = d.m;
@@ -715,7 +726,50 @@ document.addEventListener("click", async (e) => {
   }
 });
 
+// ---------------------------------------------------------------- browser Back button
+// History while signed in: [<previous site>, root, app]. The page lives on "app". Back from a tab
+// lands on My profile; Back from My profile hits "root", which asks to sign out instead of leaving.
+// Signing out steps back onto "root", so the next Back goes to the previous site.
+
+const inApp = () => !!history.state && history.state.g === "app";
+
+function ensureGuard() {
+  if (!state.me) return;
+  if (inApp()) {
+    if (history.state.view !== state.view) history.replaceState({ g: "app", view: state.view }, "");
+    return;
+  }
+  history.replaceState({ g: "root" }, "");
+  history.pushState({ g: "app", view: state.view }, "");
+}
+
+async function signOut() {
+  await api("POST", "/api/logout");
+  const depth = inApp() ? (history.state.view === "home" ? 1 : 2) : 0;
+  state.me = null; state.issued = null;
+  render();
+  if (depth) history.go(-depth);
+}
+
+window.addEventListener("popstate", async (e) => {
+  const s = e.state;
+  if (!state.me || !s) return; // signed out (login page) or an entry we didn't create
+  closeModal();
+  if (s.g === "root") {
+    history.pushState({ g: "app", view: state.view }, ""); // stay on the page; the dialog decides
+    showModal(`<h2>Sign out?</h2><p class="hint">You'll return to the sign-in page.</p>
+      <div class="row mt16"><button class="btn" data-action="close-modal">Stay signed in</button>
+      <button class="btn danger" data-action="signout">Sign out</button></div>`, { formClass: "form" });
+  } else if (s.g === "app") {
+    state.view = s.view || "home";
+    try { await refresh(); } catch (ex) { toast(ex.message); }
+  }
+});
+
 (async function init() {
+  if (inApp()) state.view = history.state.view || "home"; // reload on a tab keeps that tab
   try { await loadViewData(); } catch { state.me = null; }
   render();
+  // Browsers skip history entries added before the user has touched the page, so arm on first interaction.
+  for (const ev of ["pointerdown", "keydown"]) document.addEventListener(ev, ensureGuard, { once: true });
 })();

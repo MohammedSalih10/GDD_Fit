@@ -81,8 +81,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* ---------- login */
 .login-wrap { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
 .login-hero { display: flex; flex-direction: column; justify-content: space-between; gap: 48px; padding: clamp(28px, 5vw, 72px); }
-.login-hero .brand-mark { height: 44px; align-self: flex-start; }
-.login-hero-copy { border-left: 2px solid var(--on-ink-muted); padding-left: clamp(18px, 2vw, 32px); max-width: 34rem; }
+.login-hero-copy { border-left: 2px solid var(--on-ink-muted); padding-left: clamp(18px, 2vw, 32px); max-width: 34rem; margin-block: auto; }
+.login-logo { display: block; height: clamp(28px, 3vw, 40px); width: auto; margin-bottom: clamp(18px, 2.5vw, 28px); }
 .login-hero h1 { font-size: clamp(2rem, 4vw, 3.4rem); font-weight: 400; line-height: 1.15; }
 .login-hero p.lead { color: var(--on-ink-muted); font-size: 1.1rem; margin: 18px 0 0; }
 .login-facts { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; max-width: 40rem; }

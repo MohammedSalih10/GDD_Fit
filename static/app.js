@@ -277,6 +277,29 @@ function weekCard() {
 
 const REQ_TAG = { pending: '<span class="tag">Pending</span>', approved: '<span class="tag ok">Approved</span>', rejected: '<span class="tag">Rejected</span>' };
 
+const fmtRange = (from, to) => from === to ? fmtDate(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
+
+function leaveCard() {
+  const { user, config, today, leave_requests: reqs } = state.me;
+  if (!user.participates) return "";
+  const list = reqs.length ? `<ul class="entries">${reqs.map((r) => `<li>
+      <div class="grow"><strong>${esc(fmtRange(r.from, r.to))}</strong> <span class="muted">· ${plural(r.days, "day")}</span><div class="note">${esc(r.reason)}</div></div>
+      ${REQ_TAG[r.status]}
+      ${r.status === "pending" ? `<button class="btn danger small" data-action="cancel-leave" data-id="${r.id}" aria-label="Cancel leave request for ${esc(fmtRange(r.from, r.to))}">Cancel</button>` : ""}</li>`).join("")}</ul><hr class="divider">` : "";
+  return `<section class="card" aria-label="Apply for leave"><h2>Apply for leave</h2>
+    <p class="hint">Away for a valid reason? Apply here and a coordinator will approve it. Each excused day lowers the ${config.min_days} days you need that week by one and doesn't break your streak. Let the coordinator know in advance or within 24 hours.</p>
+    ${list}
+    <form data-form="leave-request"><div class="form-grid">
+      <div><label for="lr-from">From</label><input id="lr-from" name="from" type="date" value="${today.date}" min="${config.program_start}" required></div>
+      <div><label for="lr-to">To</label><input id="lr-to" name="to" type="date" value="${today.date}" min="${config.program_start}" required></div>
+      <div class="full"><label for="lr-reason">Reason</label><select id="lr-reason" name="reason" required>
+        ${config.leave_reasons.map((r) => `<option>${esc(r)}</option>`).join("")}</select></div>
+      <div class="full" id="lr-other-wrap" hidden><label for="lr-other">Please mention the reason</label>
+        <input id="lr-other" name="other" maxlength="${config.leave_other_max}" placeholder="e.g. Wedding in the family, Court hearing" disabled required></div></div>
+      <p class="error" role="alert"></p>
+      <button class="btn" type="submit">Send for approval</button></form></section>`;
+}
+
 function historyCard() {
   const { weeks, recent, requests } = state.me;
   return `<section class="card" aria-label="History"><h2>Previous weeks</h2><div class="weeks">
@@ -296,7 +319,7 @@ function homeView() {
   const h = new Date().getHours();
   const greet = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
   const { config } = state.me;
-  return shell(`<main class="page">${profileCard()}<div class="stack">${todayCard()}${weekCard()}${historyCard()}</div></main>`, {
+  return shell(`<main class="page">${profileCard()}<div class="stack">${todayCard()}${weekCard()}${leaveCard()}${historyCard()}</div></main>`, {
     eyebrow: "My profile",
     title: `${greet}, ${esc(state.me.user.name.split(/\s+/)[0])}`,
     sub: `${config.daily_min} minutes a day, at least ${config.week_goal} days a week (Monday to Sunday). Log today's activity and keep your streak going.`,
@@ -313,15 +336,15 @@ function boardView() {
       <td class="rank">${medal(r)}</td>
       <td><button class="link-btn" data-action="view-week" data-id="${r.id}" title="See this week's activities">${esc(r.name)}</button>${r.me ? ' <span class="tag ok">You</span>' : ""}</td>
       <td>${week ? pips(r.week) + ` <strong>${r.days}/5</strong>` : `<strong>${r.days}</strong> days`}</td>
-      <td>${fmtMins(r.minutes)}</td><td>🔥 ${r.streak}</td><td>🏆 ${r.perfect_weeks}</td></tr>`).join("");
+      <td>${fmtMins(r.minutes)}</td><td>🔥 ${r.streak}</td><td>🏆 ${r.perfect_weeks}</td><td><strong>${r.score}</strong></td></tr>`).join("");
   return shell(`<main class="page single"><section class="card" aria-label="Leaderboard">
     <div class="row spread"><h2>Rankings</h2>
       <div class="chips" role="group" aria-label="Period">
         <button class="chip" data-action="period" data-p="week" aria-pressed="${week}">This week</button>
         <button class="chip" data-action="period" data-p="month" aria-pressed="${!week}">This month</button></div></div>
-    <p class="hint">Ranked by current streak, then total time logged, since ${fmtDate(b.since, { day: "numeric", month: "short" })}. The month view helps pick the Fitness Champion of the Month.</p>
-    <div class="table-wrap"><table><thead><tr><th>#</th><th>Member</th><th>${week ? "This week" : "Goal days"}</th><th>Time</th><th>Streak</th><th>Perfect weeks</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="6" class="muted">No members yet.</td></tr>'}</tbody></table></div></section></main>`, {
+    <p class="hint">Score = current streak days × 2 h (120 min) + time logged since ${fmtDate(b.since, { day: "numeric", month: "short" })}, in minutes. Streak counts most, but extra time can close a streak gap. The month view helps pick the Fitness Champion of the Month.</p>
+    <div class="table-wrap"><table><thead><tr><th>#</th><th>Member</th><th>${week ? "This week" : "Goal days"}</th><th>Time</th><th>Streak</th><th>Perfect weeks</th><th>Score</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="7" class="muted">No members yet.</td></tr>'}</tbody></table></div></section></main>`, {
     eyebrow: "Leaderboard",
     title: week ? "This week's standings" : "This month's standings",
     sub: "Click a member's name to see the activities they logged this week.",
@@ -473,8 +496,23 @@ function requestsView() {
         : REQ_TAG[x.status]}</td></tr>`;
   const head = "<thead><tr><th>Date</th><th>Member</th><th>Activity</th><th>Duration</th><th>Reason</th><th></th></tr></thead>";
   const decided = items.filter((x) => x.status !== "pending");
+  const leaveRow = (x) => `<tr><td>${esc(fmtRange(x.from, x.to))}<div class="note">${plural(x.days, "day")}</div></td>
+      <td>${esc(x.name)} <span class="muted">${esc(x.email)}</span></td><td>${esc(x.reason)}</td>
+      <td class="actions">${x.status === "pending"
+        ? `<button class="btn small" data-action="decide-leave" data-id="${x.id}" data-ok="1">Approve</button>
+           <button class="btn danger small" data-action="decide-leave" data-id="${x.id}" data-ok="0">Reject</button>`
+        : REQ_TAG[x.status]}</td></tr>`;
+  const leaveHead = "<thead><tr><th>Dates</th><th>Member</th><th>Reason</th><th></th></tr></thead>";
+  const leavePending = state.requests.leave.filter((x) => x.status === "pending");
+  const leaveDecided = state.requests.leave.filter((x) => x.status !== "pending");
   return shell(`<main class="page single"><div class="stack">
-    <section class="card" aria-label="Pending requests"><h2>Pending (${pending.length})</h2>
+    <section class="card" aria-label="Pending leave requests"><h2>Leave requests (${leavePending.length})</h2>
+      <p class="hint">Approving marks every day in the range as excused for that member (same as the Leave tab).</p>
+      <div class="table-wrap"><table>${leaveHead}
+      <tbody>${leavePending.map(leaveRow).join("") || '<tr><td colspan="4" class="muted">Nothing waiting.</td></tr>'}</tbody></table></div></section>
+    ${leaveDecided.length ? `<section class="card" aria-label="Decided leave requests"><h2>Decided leave (last 30 days)</h2>
+      <div class="table-wrap"><table>${leaveHead}<tbody>${leaveDecided.map(leaveRow).join("")}</tbody></table></div></section>` : ""}
+    <section class="card" aria-label="Pending requests"><h2>Late-entry requests (${pending.length})</h2>
       <p class="hint">Members can log today and the previous ${state.me.config.log_back_days} days directly. Anything older comes here. Approved entries count from then on, so they can change past week results and fines.</p>
       <div class="table-wrap"><table>${head}
       <tbody>${pending.map(row).join("") || '<tr><td colspan="6" class="muted">Nothing waiting.</td></tr>'}</tbody></table></div></section>
@@ -482,8 +520,8 @@ function requestsView() {
       <div class="table-wrap"><table>${head}<tbody>${decided.map(row).join("")}</tbody></table></div></section>` : ""}
   </div></main>`, {
     eyebrow: "Admin",
-    title: "Late-entry requests",
-    sub: "Approve or reject activities logged after the logging window closed.",
+    title: "Requests",
+    sub: "Approve or reject leave applications and activities logged after the logging window closed.",
   });
 }
 
@@ -592,6 +630,10 @@ document.addEventListener("submit", async (e) => {
       const { added } = await api("POST", "/api/admin/exemptions", fd);
       await refresh();
       toast(`${plural(added, "day")} marked as excused`);
+    } else if (kind === "leave-request") {
+      await api("POST", "/api/leave-requests", fd);
+      await refresh();
+      toast("Leave request sent for approval");
     } else if (kind === "password") {
       await api("POST", "/api/password", fd);
       closeModal();
@@ -605,12 +647,18 @@ document.addEventListener("submit", async (e) => {
 });
 
 app.addEventListener("change", (e) => {
-  if (e.target.id === "lv-reason") {
+  if (e.target.id === "lv-reason" || e.target.id === "lr-reason") {
+    const p = e.target.id === "lv-reason" ? "lv" : "lr";
     const isOther = e.target.value === "Other";
-    document.getElementById("lv-other-wrap").hidden = !isOther;
-    const input = document.getElementById("lv-other");
+    document.getElementById(p + "-other-wrap").hidden = !isOther;
+    const input = document.getElementById(p + "-other");
     input.disabled = !isOther;
     if (isOther) input.focus();
+    return;
+  }
+  if (e.target.id === "lr-from") {
+    const to = document.getElementById("lr-to");
+    if (to.value < e.target.value) to.value = e.target.value;
     return;
   }
   if (e.target.id === "log-date") {
@@ -701,6 +749,16 @@ document.addEventListener("click", async (e) => {
     } else if (a === "del-leave") {
       await api("DELETE", `/api/admin/exemptions/${d.id}/${d.date}`);
       await refresh();
+    } else if (a === "cancel-leave") {
+      if (!confirm("Cancel this leave request?")) return;
+      await api("DELETE", "/api/leave-requests/" + d.id);
+      await refresh();
+    } else if (a === "decide-leave") {
+      const ok = d.ok === "1";
+      if (!ok && !confirm("Reject this leave request?")) return;
+      await api("POST", "/api/admin/leave-requests/" + d.id, { approve: ok });
+      await refresh();
+      toast(ok ? "Approved — days marked as excused" : "Leave request rejected");
     } else if (a === "decide-req") {
       const ok = d.ok === "1";
       if (!ok && !confirm("Reject this request?")) return;

@@ -32,10 +32,11 @@ TZ = timezone(timedelta(hours=float(os.environ.get("GDD_TZ_OFFSET_HOURS", "5.5")
 SECURE_COOKIE = os.environ.get("GDD_SECURE_COOKIE") == "1"
 
 DAILY_MIN = 30        # minutes needed for a day to count
+STREAK_DAY_MINUTES = 120  # leaderboard score: each streak day is worth this many minutes (2 h)
 SESSION_MIN = 15      # smallest loggable session (two of these make the daily 30)
 SESSION_MAX = 300
 MAX_ENTRIES_PER_DAY = 8
-ROOT_EMAIL = "admin"  # the single built-in Admin; every other is_admin account is a Coordinator
+ROOT_EMAIL = os.environ.get("GDD_ROOT_EMAIL", "admin").strip() or "admin"  # the single built-in Admin; every other is_admin account is a Coordinator
 PROGRAM_START = date(2026, 11, 1)  # nothing can be logged before this, for any member
 LOG_BACK_DAYS = 4     # calendar days before today that members may still log directly (also the fine grace after Sunday)
 REQUEST_REASON_MAX = 200 # why an entry outside the open logging window is late
@@ -47,6 +48,9 @@ HISTORY_WEEKS = 5
 EXEMPT_REASONS = ["Illness or injury", "Approved leave", "Official travel / site work",
                   "Family emergency", "Medical advice", "Other"]
 EXEMPT_OTHER_MAX = 120  # free-text detail when the reason is "Other"; stored as "Other: <detail>"
+LEAVE_MAX_DAYS = 62     # longest single leave range (member request or admin entry)
+LEAVE_ADVANCE_DAYS = 365  # how far ahead a member may apply
+LEAVE_MAX_PENDING = 5   # open leave requests per member
 
 # From section 3 of the enrolment form ("Eligible activities").
 ACTIVITIES = [
@@ -98,6 +102,17 @@ CREATE TABLE IF NOT EXISTS log_requests (
   activity TEXT NOT NULL,
   minutes INTEGER NOT NULL,
   note TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  decided_by INTEGER REFERENCES users(id),
+  decided_at TEXT
+);
+CREATE TABLE IF NOT EXISTS leave_requests (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  from_date TEXT NOT NULL,
+  to_date TEXT NOT NULL,
   reason TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL,
@@ -169,11 +184,11 @@ def init_db():
         pw = new_password()
         conn.execute(
             "INSERT INTO users(email,name,password_hash,is_admin,participates,created_on) VALUES(?,?,?,1,0,?)",
-            ("admin", "Admin", hash_password(pw), today().isoformat()))
+            (ROOT_EMAIL, "Admin", hash_password(pw), today().isoformat()))
         conn.commit()
         print("=" * 60)
         print(" First run: admin account created")
-        print("   Sign in as : admin")
+        print("   Sign in as : %s" % ROOT_EMAIL)
         print("   Password   : %s" % pw)
         print(" Sign in, add members, and change this password.")
         print("=" * 60)
@@ -289,6 +304,12 @@ def request_dict(r):
     return dict(entry_dict(r), reason=r["reason"], status=r["status"])
 
 
+def leave_request_dict(r):
+    start, end = date.fromisoformat(r["from_date"]), date.fromisoformat(r["to_date"])
+    return {"id": r["id"], "from": r["from_date"], "to": r["to_date"], "days": (end - start).days + 1,
+            "reason": r["reason"], "status": r["status"]}
+
+
 # ---------------------------------------------------------------- handlers
 
 def login_handler(conn, req, _):
@@ -337,10 +358,15 @@ def me_handler(conn, req, user):
     requests = [request_dict(r) for r in conn.execute(
         "SELECT * FROM log_requests WHERE user_id=? AND (status='pending' OR decided_at>=?) ORDER BY id DESC",
         (user["id"], (t - timedelta(days=14)).isoformat()))]
+    leave_requests = [leave_request_dict(r) for r in conn.execute(
+        "SELECT * FROM leave_requests WHERE user_id=? AND (status='pending' OR decided_at>=?) ORDER BY id DESC",
+        (user["id"], (t - timedelta(days=30)).isoformat()))]
     today_min = s["day_min"].get(t, 0)
     return {
         "user": {"email": user["email"],"name": user["name"], "is_admin": bool(user["is_admin"]),
-                 "is_root": user["email"] == ROOT_EMAIL, "member_since": user["created_on"]},
+                 "is_root": user["email"] == ROOT_EMAIL, "member_since": user["created_on"],
+                 "participates": bool(user["participates"])},
+        "leave_requests": leave_requests,
         "today": {"date": t.isoformat(), "is_workday": t.weekday() < 5, "minutes": today_min,
                   "met": today_min >= DAILY_MIN, "entries": entries, "exempt": s["exempt"].get(t)},
         "stats": s["stats"], "week": s["week"], "weeks": weeks, "recent": recent, "requests": requests,
@@ -350,7 +376,8 @@ def me_handler(conn, req, user):
                    "log_open_from": log_open_from(t).isoformat(), "log_back_days": LOG_BACK_DAYS,
                    "min_days": MIN_DAYS,
                    "program_start": PROGRAM_START.isoformat(),
-"reason_max": REQUEST_REASON_MAX},
+                   "reason_max": REQUEST_REASON_MAX,
+                   "leave_reasons": EXEMPT_REASONS, "leave_other_max": EXEMPT_OTHER_MAX},
     }
 
 
@@ -575,12 +602,14 @@ def leaderboard_handler(conn, req, user):
             "streak": s["stats"]["current_streak"], "perfect_weeks": s["stats"]["perfect_weeks"],
             "week": [x["status"] for x in s["week"]],
         })
+    for r in rows:
+        r["score"] = r["streak"] * STREAK_DAY_MINUTES + r["minutes"]  # 1 streak day = 2 h of logged time
     rows.sort(key=lambda r: r["name"].lower(), reverse=True)  # ties: reverse alphabetical (stable sort below keeps this)
-    rows.sort(key=lambda r: (-r["streak"], -r["minutes"]))
+    rows.sort(key=lambda r: -r["score"])
     rank, prev = 0, None
     for r in rows:
-        if (r["streak"], r["minutes"]) != prev:
-            rank, prev = rank + 1, (r["streak"], r["minutes"])  # dense: ties share a rank, next rank is +1
+        if r["score"] != prev:
+            rank, prev = rank + 1, r["score"]  # dense: ties share a rank, next rank is +1
         r["rank"] = rank
     return {"period": period, "since": start.isoformat(), "rows": rows}
 
@@ -613,9 +642,8 @@ def admin_exemptions_handler(conn, req, user):
                        "name": r["name"], "email": r["email"]} for r in rows]}
 
 
-def admin_exemption_add_handler(conn, req, user):
-    require_admin(user)
-    b = req.json()
+def leave_reason(b):
+    """Validated leave reason from a request body (shared by admin entry and member requests)."""
     reason = str(b.get("reason", ""))
     if reason not in EXEMPT_REASONS:
         raise ApiError(400, "Pick a reason from the list.")
@@ -624,22 +652,84 @@ def admin_exemption_add_handler(conn, req, user):
         if len(detail) < 2:
             raise ApiError(400, "Mention the reason for the leave.")
         reason = "Other: %s" % detail[:EXEMPT_OTHER_MAX]
+    return reason
+
+
+def leave_range(b):
+    start, end = parse_day(b.get("from")), parse_day(b.get("to") or b.get("from"))
+    if end < start or (end - start).days > LEAVE_MAX_DAYS:
+        raise ApiError(400, "Date range must run forwards and be at most 2 months.")
+    return start, end
+
+
+def add_exemptions(conn, uid, start, end, reason):
+    added, d = 0, start
+    while d <= end:
+        conn.execute("INSERT OR REPLACE INTO exemptions VALUES(?,?,?)", (uid, d.isoformat(), reason))
+        added += 1
+        d += timedelta(days=1)
+    return added
+
+
+def admin_exemption_add_handler(conn, req, user):
+    require_admin(user)
+    b = req.json()
+    reason = leave_reason(b)
     try:
         uid = int(b.get("user_id"))
     except (TypeError, ValueError):
         raise ApiError(400, "Pick a member.")
     if not conn.execute("SELECT 1 FROM users WHERE id=?", (uid,)).fetchone():
         raise ApiError(404, "Member not found.")
-    start, end = parse_day(b.get("from")), parse_day(b.get("to") or b.get("from"))
-    if end < start or (end - start).days > 62:
-        raise ApiError(400, "Date range must run forwards and be at most 2 months.")
-    added, d = 0, start
-    while d <= end:
-        conn.execute("INSERT OR REPLACE INTO exemptions VALUES(?,?,?)", (uid, d.isoformat(), reason))
-        added += 1
-        d += timedelta(days=1)
+    start, end = leave_range(b)
+    added = add_exemptions(conn, uid, start, end, reason)
     conn.commit()
     return {"added": added}
+
+
+def leave_apply_handler(conn, req, user):
+    """A member applies for leave; it only takes effect once a coordinator/admin approves it."""
+    if not user["participates"]:
+        raise ApiError(403, "This account doesn't take part in the challenge.")
+    b = req.json()
+    reason = leave_reason(b)
+    start, end = leave_range(b)
+    if start < PROGRAM_START:
+        raise ApiError(400, "The programme started on %s; earlier dates can't be excused." % PROGRAM_START.strftime("%d %b"))
+    if start > today() + timedelta(days=LEAVE_ADVANCE_DAYS):
+        raise ApiError(400, "That date is too far ahead.")
+    pending = conn.execute("SELECT COUNT(*) FROM leave_requests WHERE user_id=? AND status='pending'",
+                           (user["id"],)).fetchone()[0]
+    if pending >= LEAVE_MAX_PENDING:
+        raise ApiError(400, "You already have %d requests waiting. Wait for a decision or cancel one." % LEAVE_MAX_PENDING)
+    conn.execute("INSERT INTO leave_requests(user_id,from_date,to_date,reason,created_at) VALUES(?,?,?,?,?)",
+                 (user["id"], start.isoformat(), end.isoformat(), reason, now().isoformat(timespec="seconds")))
+    conn.commit()
+    return {"ok": True}
+
+
+def leave_cancel_handler(conn, req, user, rid):
+    cur = conn.execute("DELETE FROM leave_requests WHERE id=? AND user_id=? AND status='pending'",
+                       (int(rid), user["id"]))
+    conn.commit()
+    if not cur.rowcount:
+        raise ApiError(404, "Request not found or already decided.")
+    return {"ok": True}
+
+
+def admin_leave_decide_handler(conn, req, user, rid):
+    require_admin(user)
+    r = conn.execute("SELECT * FROM leave_requests WHERE id=? AND status='pending'", (int(rid),)).fetchone()
+    if not r:
+        raise ApiError(404, "Request not found or already decided.")
+    approve = bool(req.json().get("approve"))
+    if approve:
+        add_exemptions(conn, r["user_id"], date.fromisoformat(r["from_date"]),
+                       date.fromisoformat(r["to_date"]), r["reason"])
+    conn.execute("UPDATE leave_requests SET status=?, decided_by=?, decided_at=? WHERE id=?",
+                 ("approved" if approve else "rejected", user["id"], now().isoformat(timespec="seconds"), r["id"]))
+    conn.commit()
+    return {"ok": True}
 
 
 def admin_exemption_delete_handler(conn, req, user, uid, day):
@@ -656,7 +746,11 @@ def admin_requests_handler(conn, req, user):
     rows = conn.execute(
         "SELECT r.*, u.name, u.email FROM log_requests r JOIN users u ON u.id=r.user_id "
         "WHERE r.status='pending' OR r.decided_at>=? ORDER BY r.status='pending' DESC, r.id DESC", (since,))
-    return {"items": [dict(request_dict(r), name=r["name"], email=r["email"]) for r in rows]}
+    leave = conn.execute(
+        "SELECT r.*, u.name, u.email FROM leave_requests r JOIN users u ON u.id=r.user_id "
+        "WHERE r.status='pending' OR r.decided_at>=? ORDER BY r.status='pending' DESC, r.id DESC", (since,))
+    return {"items": [dict(request_dict(r), name=r["name"], email=r["email"]) for r in rows],
+            "leave": [dict(leave_request_dict(r), name=r["name"], email=r["email"]) for r in leave]}
 
 
 def admin_request_decide_handler(conn, req, user, rid):
@@ -716,6 +810,9 @@ ROUTES = [
     ("GET", r"/api/admin/report", admin_report_handler, True),
     ("GET", r"/api/admin/log-requests", admin_requests_handler, True),
     ("POST", r"/api/admin/log-requests/(\d+)", admin_request_decide_handler, True),
+    ("POST", r"/api/admin/leave-requests/(\d+)", admin_leave_decide_handler, True),
+    ("POST", r"/api/leave-requests", leave_apply_handler, True),
+    ("DELETE", r"/api/leave-requests/(\d+)", leave_cancel_handler, True),
     ("POST", r"/api/admin/members/(\d+)/role", admin_role_handler, True),
     ("POST", r"/api/login", login_handler, False),
     ("POST", r"/api/logout", logout_handler, False),

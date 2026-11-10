@@ -315,7 +315,8 @@ def leave_request_dict(r):
 def login_handler(conn, req, _):
     body = req.json()
     email, pw = str(body.get("email", "")).strip(), str(body.get("password", ""))
-    key = (req.client_address[0], email.lower())
+    req.log_who = email or "-"
+    key =(req.client_address[0], email.lower())
     req.check_throttle(key)
     u = conn.execute("SELECT * FROM users WHERE email=? AND active=1", (email,)).fetchone()
     # Hash even for unknown users so response time doesn't reveal which emails exist.
@@ -840,6 +841,7 @@ MAX_FAILS, FAIL_WINDOW = 5, 600
 class Handler(BaseHTTPRequestHandler):
     server_version = "GDDFit"
     set_cookie = None
+    log_who = "-"  # signed-in email (or attempted login email) shown in the access log
 
     def do_GET(self): self.dispatch("GET")
     def do_POST(self): self.dispatch("POST")
@@ -847,6 +849,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s %s\n" % (now().strftime("%H:%M:%S"), fmt % args))
+
+    def log_request(self, code="-", size="-"):
+        # Quiet access log: only writes (POST/DELETE) and failures (>=400); skips static files and routine reads.
+        try:
+            status = int(code)
+        except (TypeError, ValueError):
+            status = 0
+        if self.command == "GET" and status < 400:
+            return
+        who = re.sub(r"[^\x21-\x7e]", "?", str(self.log_who))[:80]
+        self.log_message("%s %s %s %s", who, self.command, self.path.split("?")[0], code)
 
     # -- request helpers
     def json(self):
@@ -892,6 +905,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def dispatch(self, method):
         self.set_cookie = None
+        self.log_who = "-"
         self.query = parse_qs(urlparse(self.path).query)
         path = urlparse(self.path).path
         if path.startswith("/api/"):
@@ -914,6 +928,8 @@ class Handler(BaseHTTPRequestHandler):
             conn = db()
             try:
                 user = self.current_user(conn)
+                if user:
+                    self.log_who = user["email"]
                 if needs_auth and not user:
                     raise ApiError(401, "Please sign in.")
                 result = fn(conn, self, user, *match.groups()) if needs_auth else fn(conn, self, user)

@@ -287,7 +287,7 @@ function leaveCard() {
       ${REQ_TAG[r.status]}
       ${r.status === "pending" ? `<button class="btn danger small" data-action="cancel-leave" data-id="${r.id}" aria-label="Cancel leave request for ${esc(fmtRange(r.from, r.to))}">Cancel</button>` : ""}</li>`).join("")}</ul><hr class="divider">` : "";
   return `<section class="card" aria-label="Apply for leave"><h2>Apply for leave</h2>
-    <p class="hint">Away for a valid reason? Apply here and a coordinator will approve it. Each excused day lowers the ${config.min_days} days you need that week by one and doesn't break your streak. Let the coordinator know in advance or within 24 hours.</p>
+    <p class="hint">Away for a valid reason? Apply here and a coordinator will approve it. Each excused day lowers the ${config.min_days} days you need that week by one, but a weekday on leave still ends your streak. Let the coordinator know in advance or within 24 hours.</p>
     ${list}
     <form data-form="leave-request"><div class="form-grid">
       <div><label for="lr-from">From</label><input id="lr-from" name="from" type="date" value="${today.date}" min="${config.program_start}" required></div>
@@ -461,7 +461,7 @@ function leaveView() {
       <td>${esc(x.reason)}</td><td><button class="btn danger small" data-action="del-leave" data-id="${x.user_id}" data-date="${x.date}">Remove</button></td></tr>`).join("");
   return shell(`<main class="page single"><div class="stack">
     <section class="card" aria-label="Mark leave"><h2>Mark valid-reason days</h2>
-      <p class="hint">Each excused day lowers the ${state.me.config.min_days} days a member must complete that week by one (${state.me.config.min_days}+ excused days = no fine). Excused days don't break the streak or count toward a perfect week.</p>
+      <p class="hint">Each excused day lowers the ${state.me.config.min_days} days a member must complete that week by one (${state.me.config.min_days}+ excused days = no fine). Excused weekdays still break the streak and don't count toward a perfect week.</p>
       <form data-form="leave"><div class="form-grid">
         <div class="full"><label for="lv-user">Member</label><select id="lv-user" name="user_id" required>
           ${people.map((m) => `<option value="${m.id}">${esc(m.name)} (${esc(m.email)})</option>`).join("")}</select></div>
@@ -479,7 +479,7 @@ function leaveView() {
   </div></main>`, {
     eyebrow: "Admin",
     title: "Leave &amp; excused days",
-    sub: "Each day marked here reduces the days a member must complete that week and doesn't break their streak.",
+    sub: "Each day marked here reduces the days a member must complete that week, but still breaks their streak.",
   });
 }
 

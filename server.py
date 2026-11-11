@@ -226,9 +226,10 @@ def day_status(d, minutes, exempt, t, joined):
 
 def streaks(qualified, exempt, t):
     """Consecutive days with the goal met. Saturday/Sunday are optional: an unlogged weekend
-    day or an excused day neither counts nor breaks the streak; a missed weekday resets it."""
+    day neither counts nor breaks the streak (a logged one adds to it). Any missed weekday,
+    including an excused/leave day, resets it. `exempt` is kept in the signature for callers."""
     def skippable(d):
-        return d in exempt or d.weekday() > 4
+        return d.weekday() > 4
 
     count, d = 0, t
     while d >= PROGRAM_START:
